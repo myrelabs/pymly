@@ -1,0 +1,49 @@
+[build-system]
+requires = ["setuptools >= 61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+dynamic = ["version"]
+
+name = "pymly"
+description = "Python-augmented YAML Templates"
+readme = "README.md"
+license = {text = "MIT License", file = "LICENSE"}
+keywords = ["yaml", "interpreter"]
+
+authors = [
+  {name = "Marcin Słowik", email = "marcin.slowik@myrelabs.com"},
+]
+maintainers = [
+  {name = "Marcin Słowik", email = "marcin.slowik@myrelabs.com"},
+]
+
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3 :: Only",
+    "Topic :: File Formats",
+    "Topic :: Software Development :: Code Generators",
+    "Topic :: Utilities",
+    "Typing :: Typed",
+]
+dependencies = [
+    'PyYAML>=5.4',  # Untested below
+]
+requires-python = ">= 3.8"
+
+[project.scripts]
+pymly = "pymly.__main__:main"
+
+[project.urls]
+Repository = "https://github.com/me/spam.git"
+Issues = "https://github.com/me/spam/issues"
+
+[tool.setuptools.dynamic]
+version = {attr = "pymly.__version__"}
+
+[tool.yapf]
+based_on_style = 'pep8'
+column_limit = 120

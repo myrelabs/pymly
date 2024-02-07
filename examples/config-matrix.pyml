@@ -1,0 +1,207 @@
+#! /usr/bin/env pymly
+#
+# This an example generates a Gitlab-like pipeline file for a preconfigured
+# configuration matrix and properties.
+# 
+# The first section specifies the configuration matrix and properties associated with
+# each option. The section is mostly a pure YAML, but contains a single entry gathering
+# previous column definitions in a compact form.
+#
+# The second section contains configuration matrix assembly code, which could be provided
+# as an external file, but instead we elected to include it to have the example be self-contained.
+# As a result, the provided procedure (parse_config_matrix) retuns a list of configurations that are
+# contained in the matrix (are non-null in the config_matrix table).
+#
+# The third section contains pipeline templates, presenting in a human-readable fashion
+# chunks that are later used in assembling the final configuration matrix.
+#
+# The fourth section contains the final assemply logic, i.e.:
+# * calls the 'parse_config_matrix' function to get the list of configurations to generate;
+# * for each generation calls 'process_config' function, which, based on the templates,
+#   assembles 'build:' and 'test:' stages for the configuration (using deep_format to substitute
+#   strings in templates);
+# * finally writes a complete pipeline yaml down to a file.
+
+# --------------------------------------------------------------------------------------------------
+#  Pure configuration matrix  
+# --------------------------------------------------------------------------------------------------
+
+base_images: {
+    'bionic': {'IMAGE_FROM': 'ubuntu:bionic'},
+    'focal':  {'IMAGE_FROM': 'ubuntu:focal'},
+    'buster': {'IMAGE_FROM': 'debian:buster'}
+}
+
+cmake_versions: {
+    'default': {'CMAKE_RELEASE_VERSION': 'apt'},
+    '3.11.4':  {'CMAKE_RELEASE_VERSION': '3.11.4'},
+    '3.18.4':  {'CMAKE_RELEASE_VERSION': '3.18.4'}
+}
+
+compiler_confs: {
+    'gcc-8':     {'CC': 'gcc',   'compiler-suffix': '-8'},
+    'gcc-10':    {'CC': 'gcc',   'compiler-suffix': '-10'},
+    'clang-5':   {'CC': 'clang', 'compiler-suffix': '-5.0'},
+    'clang-7':   {'CC': 'clang', 'compiler-suffix': '-7'},
+    'clang-10':  {'CC': 'clang', 'compiler-suffix': '-10'},
+    'clang-tot': {'CC': 'clang'}
+}
+
+configurations: {
+    'debug':    {'cmake-conf': 'Debug'},
+    'coverage': {'cmake-conf': 'Debug', 'cmake-extra-opts': '-DSERVER_ADD_COVERAGE=On'},
+    'release':  {'cmake-conf': 'Release'},
+}
+
+defaults: { cmake-extra-opts: '', compiler-suffix: '' }
+
+# manual stays for "manual on any push or merge request"
+# always stays for "auto on any push or merge request"
+# master stays for "auto on master push or merge request, manual for other push events"
+rules: ['manual', 'always', 'master']
+
+#!> config_matrix_dims = ( (configurations,), (base_images,cmake_versions,), (compiler_confs,) )
+config_matrix: {
+    'debug': {
+        '#header':         [ 'gcc-8',  'gcc-10', 'clang-5',  'clang-7',  'clang-10', 'clang-tot' ],
+        'bionic, 3.11.4':  [  ~,        ~,        ~,          ~,          ~,          ~,         ],
+        'bionic, 3.18.4':  [  ~,        ~,        ~,          ~,          ~,          ~,         ],
+        'focal,  default': [  ~,        ~,        ~,          ~,          ~,          ~,         ],
+        'buster, default': [  ~,        ~,        ~,          ~,          ~,          ~,         ],
+    },
+    'coverage': {
+        '#header':         [ 'gcc-8',  'gcc-10', 'clang-5',  'clang-7',  'clang-10', 'clang-tot' ],
+        'bionic, 3.11.4':  [  ~,        ~,        ~,          ~,          ~,          ~,         ],
+        'bionic, 3.18.4':  [  ~,        ~,        ~,          ~,          ~,          ~,         ],
+        'focal,  default': [  ~,        ~,        ~,          ~,          ~,         'manual',   ],
+        'buster, default': [  ~,        ~,        ~,          ~,         'always',   'manual',   ],
+    },
+    'release': {
+        '#header':         [ 'gcc-8',  'gcc-10', 'clang-5',  'clang-7',  'clang-10', 'clang-tot' ],
+        'bionic, 3.11.4':  [ 'master',  ~,        ~,          ~,          ~,          ~,         ],
+        'bionic, 3.18.4':  [  ~,        ~,       'master',    ~,          ~,          ~,         ],
+        'focal,  default': [  ~,       'master',  ~,         'manual',    ~,          ~,         ],
+        'buster, default': [  ~,        ~,        ~,         'master',    ~,          ~,         ],
+    }
+}
+
+
+# --------------------------------------------------------------------------------------------------
+#  Matrix backend and execution
+# --------------------------------------------------------------------------------------------------
+
+#!> import copy
+#!> import itertools
+
+#!> def parse_config_matrix(cm, dims, rules, prefix=None):
+#!.     result = []
+#!.     if prefix is None:
+#!.         prefix = tuple()
+#!.     if len(dims) < 2:
+#!.         raise ValueError(f"Not enough dimensions: {len(dims)}, at least 2 required")
+#!.     if len(dims) > 2:
+#!.         # TODO: change to check for #header instead of blindly going deeper, s.t. mixed structures are possible
+#!.         dd = dims[0]
+#!.         if len(dd) != 1:
+#!.             raise NotImplementedError()
+#!.         ddd, *_ = dd
+#!.         if not (frozenset(cm.keys()) <= frozenset(ddd)):
+#!.             raise ValueError("Matrix level doesn't match dimension keys")
+#!.         for k, sub in cm.items():
+#!.             pre = (*prefix, k)
+#!.             result += parse_config_matrix(sub, dims[1:], rules, pre)
+#!.     else:
+#!.         cm = copy.deepcopy(cm)
+#!.         header = cm['#header']
+#!.         del cm['#header']
+#!.         dx = dims[1]
+#!.         dy = dims[0]
+#!.         def _unpack_keys(dim):
+#!.             if len(dim) > 1:
+#!.                 return frozenset(itertools.product(*(v.keys() for v in dim)))
+#!.             else:
+#!.                 return frozenset(dim[0].keys())
+#!.         pdx = _unpack_keys(dx)
+#!.         pdy = _unpack_keys(dy)
+#!.         if not (frozenset(header) <= pdx):
+#!.             raise ValueError("Header doesn't match x-axis keys")
+#!.         for y, row in cm.items():
+#!.             if y not in pdy:
+#!.                 raise ValueError(f"Row {y} doesn't match any y-axis key")
+#!.             if len(row) != len(header):
+#!.                 raise ValueError(f"Row {y} doesn't match header length")
+#!.             for x, v in zip(header, row):
+#!.                 # FIXME: v should be checked against rules
+#!.                 result.append((*prefix, y, x, v))
+#!.     return result
+
+# --------------------------------------------------------------------------------------------------
+#  Config templates
+# --------------------------------------------------------------------------------------------------
+
+templates:
+    main_yaml:
+        stages: [build, test]
+
+    build:
+        image: '{IMAGE_FROM}'
+        stage: 'build'
+        script:
+            - 'export CC="ccache {CC}{compiler-suffix}"'
+            - 'mkdir -p build && cd build'
+            - 'cmake .. -GNinja -DCMAKE_BUILD_TYPE={cmake-conf} {cmake-extra-opts}'
+            - 'cmake --build .'
+
+    test:
+        image: '{IMAGE_FROM}'
+        stage: 'build'
+        script:
+            - cd build
+            - ctest
+
+    rules:
+        master: { rules: [when: master] }
+        manual: { rules: [when: manual] }
+        always: { rules: [when: always] }
+
+# --------------------------------------------------------------------------------------------------
+#  Assembly logic
+#  Config Matrix entry points (initialize, process_config, finalize)
+# --------------------------------------------------------------------------------------------------
+
+#!> import copy
+#!> import yaml
+#!> from pymly import deep_format, deep_split
+
+#!> def initialize():
+#!.     global main_yaml
+#!.     main_yaml = copy.deepcopy(templates['main_yaml'])
+
+#!> def process_config(config, base_image_k, cmake_conf_k, compiler_conf_k, rule):
+#!.     print(config, base_image_k, cmake_conf_k, compiler_conf_k, rule)
+#!.     pipeline_slug = f"{compiler_conf_k}:cmake-{cmake_conf_k}:{base_image_k}:{config}"
+#!.     base_image_d = base_images[base_image_k]
+#!.     compiler_conf_d = compiler_confs[compiler_conf_k]
+#!.     configuration_d = configurations[config]
+#!.     cmake_version_d = cmake_versions[cmake_conf_k]
+#!.     rule_tpl = templates['rules'][rule]
+#!.     config_dict = defaults | {
+#!.         **base_image_d,
+#!.         **compiler_conf_d,
+#!.         **configuration_d,
+#!.         **cmake_version_d,
+#!.     }
+#!.     main_yaml[f'build:{pipeline_slug}'] = deep_format(copy.deepcopy(templates['build']), config_dict) | rule_tpl
+#!.     main_yaml[f'test:{pipeline_slug}']  = deep_format(copy.deepcopy(templates['test']),  config_dict) | rule_tpl
+
+#!> def finalize():
+#!.     with open('pipelines.yml', 'w') as f:
+#!.         yaml.dump(main_yaml, f)
+
+#!> initialize()
+#!> config_matrix = deep_split(config_matrix)
+#!> parsed_rules = parse_config_matrix(config_matrix, config_matrix_dims, rules)
+#!> for config, (base_image, cmake_conf), compiler_conf, rule in parsed_rules:
+#!.     if rule is not None:
+#!.         process_config(config, base_image, cmake_conf, compiler_conf, rule)
+#!> finalize()
